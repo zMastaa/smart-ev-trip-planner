@@ -25,6 +25,7 @@ from .const import (
     KEY_NEXT_EVENT_SUMMARY,
     KEY_REQUIRED_RANGE_KM,
     KEY_TRIP_DISTANCE_KM,
+    KEY_TRIP_DURATION_MIN,
 )
 from .coordinator import SmartTripPlannerCoordinator
 
@@ -88,6 +89,15 @@ SENSOR_DESCRIPTIONS: tuple[TripSensorEntityDescription, ...] = (
         native_unit_of_measurement="%",
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda d: d.get(KEY_EV_BATTERY_PERCENT),
+    ),
+    TripSensorEntityDescription(
+        key="trip_duration",
+        name="Driving Duration",
+        icon="mdi:timer-outline",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement="min",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda d: d.get(KEY_TRIP_DURATION_MIN),
     ),
 )
 

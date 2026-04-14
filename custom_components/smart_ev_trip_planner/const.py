@@ -8,6 +8,13 @@ CONF_CALENDAR_ENTITY = "calendar_entity"
 CONF_BATTERY_ENTITY = "battery_entity"
 CONF_RANGE_ENTITY = "range_entity"
 CONF_BUFFER_PERCENT = "buffer_percent"
+CONF_GOOGLE_MAPS_API_KEY = "google_maps_api_key"
+
+# Google Maps
+GOOGLE_DISTANCE_MATRIX_URL = "https://maps.googleapis.com/maps/api/distancematrix/json"
+
+# Data keys returned by coordinator
+KEY_TRIP_DURATION_MIN = "trip_duration_min"
 
 # Defaults
 DEFAULT_BUFFER_PERCENT = 15

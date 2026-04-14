@@ -2,29 +2,32 @@
   "config": {
     "step": {
       "user": {
-        "title": "Smart Trip Planner Setup",
-        "description": "Connect your Home Assistant Calendar and EV sensors so the planner can alert you when your EV needs charging before an upcoming trip.",
+        "title": "Smart EV Trip Planner Setup",
+        "description": "Connect your Home Assistant Calendar and EV sensors. A Google Maps API key is required to calculate real driving distances to your calendar event locations.",
         "data": {
           "calendar_entity": "Calendar",
           "battery_entity": "EV Battery Level Sensor",
           "range_entity": "EV Estimated Range Sensor",
-          "buffer_percent": "Charge Buffer (%)"
+          "buffer_percent": "Charge Buffer (%)",
+          "google_maps_api_key": "Google Maps API Key"
         },
         "data_description": {
           "calendar_entity": "The calendar to monitor for upcoming events with locations.",
           "battery_entity": "Sensor reporting your EV's current battery percentage.",
           "range_entity": "Sensor reporting your EV's current estimated range (km or mi).",
-          "buffer_percent": "Extra range margin added on top of the trip distance."
+          "buffer_percent": "Extra range margin added on top of the trip distance.",
+          "google_maps_api_key": "API key from Google Cloud Console. Requires the Distance Matrix API to be enabled."
         }
       }
     },
     "error": {
-      "cannot_connect": "Failed to connect to calendar entity.",
+      "cannot_connect": "Failed to connect — check your network or calendar entity.",
       "invalid_sensor": "Could not read value from the selected EV sensor.",
+      "invalid_api_key": "Google Maps API key was rejected. Check it is valid and the Geocoding API is enabled.",
       "unknown": "An unexpected error occurred."
     },
     "abort": {
-      "already_configured": "Smart Trip Planner is already configured."
+      "already_configured": "Smart EV Trip Planner is already configured."
     }
   }
 }

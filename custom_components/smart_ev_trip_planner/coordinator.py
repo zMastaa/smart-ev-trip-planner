@@ -1,9 +1,8 @@
-"""DataUpdateCoordinator for Smart Trip Planner."""
+"""DataUpdateCoordinator for Smart EV Trip Planner."""
 from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
-from math import asin, cos, radians, sin, sqrt
 from typing import Any
 
 import aiohttp
@@ -19,10 +18,12 @@ from .const import (
     CONF_BATTERY_ENTITY,
     CONF_BUFFER_PERCENT,
     CONF_CALENDAR_ENTITY,
+    CONF_GOOGLE_MAPS_API_KEY,
     CONF_RANGE_ENTITY,
     DEFAULT_BUFFER_PERCENT,
     DEFAULT_LOOKAHEAD_DAYS,
     DOMAIN,
+    GOOGLE_DISTANCE_MATRIX_URL,
     KEY_EV_BATTERY_PERCENT,
     KEY_EV_RANGE_KM,
     KEY_GEOCODE_SUCCESS,
@@ -32,22 +33,13 @@ from .const import (
     KEY_NEXT_EVENT_SUMMARY,
     KEY_REQUIRED_RANGE_KM,
     KEY_TRIP_DISTANCE_KM,
+    KEY_TRIP_DURATION_MIN,
     UPDATE_INTERVAL_MINUTES,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 MILES_TO_KM = 1.60934
-
-
-def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Return the great-circle distance in kilometres between two points."""
-    r = 6371.0
-    lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
-    dlat = lat2 - lat1
-    dlon = lon2 - lon1
-    a = sin(dlat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(dlon / 2) ** 2
-    return 2 * r * asin(sqrt(a))
 
 
 class SmartTripPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -62,9 +54,10 @@ class SmartTripPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.buffer_percent: float = entry.data.get(
             CONF_BUFFER_PERCENT, DEFAULT_BUFFER_PERCENT
         )
+        self._api_key: str = entry.data[CONF_GOOGLE_MAPS_API_KEY]
 
-        # Simple in-memory geocode cache: location string → (lat, lon)
-        self._geocode_cache: dict[str, tuple[float, float]] = {}
+        # Cache: location string → (driving_distance_km, duration_min)
+        self._distance_cache: dict[str, tuple[float, float]] = {}
 
         super().__init__(
             hass,
@@ -118,45 +111,91 @@ class SmartTripPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         return None
 
-    async def _geocode(self, location: str) -> tuple[float, float] | None:
-        """Geocode a location string to (lat, lon) via Nominatim, with in-memory caching."""
-        if location in self._geocode_cache:
-            return self._geocode_cache[location]
-
-        url = "https://nominatim.openstreetmap.org/search"
-        params = {"q": location, "format": "json", "limit": "1"}
-        headers = {"User-Agent": f"HomeAssistant-{DOMAIN}/1.0"}
-
-        try:
-            timeout = aiohttp.ClientTimeout(total=10)
-            async with aiohttp.ClientSession(headers=headers, timeout=timeout) as session:
-                async with session.get(url, params=params) as resp:
-                    resp.raise_for_status()
-                    results = await resp.json()
-
-            if not results:
-                _LOGGER.warning("Nominatim returned no results for location: '%s'", location)
-                return None
-
-            coords = (float(results[0]["lat"]), float(results[0]["lon"]))
-            self._geocode_cache[location] = coords
-            _LOGGER.debug("Geocoded '%s' → %s", location, coords)
-            return coords
-
-        except aiohttp.ClientError as exc:
-            _LOGGER.error("Network error geocoding '%s': %s", location, exc)
-        except Exception as exc:
-            _LOGGER.error("Unexpected geocoding error for '%s': %s", location, exc)
-
-        return None
-
-    def _home_coordinates(self) -> tuple[float, float] | None:
-        """Return HA home (lat, lon) from the config, or None."""
+    def _home_origin(self) -> str | None:
+        """Return the HA home location as a 'lat,lon' string for the Distance Matrix origin."""
         lat = self.hass.config.latitude
         lon = self.hass.config.longitude
         if lat is None or lon is None:
+            _LOGGER.error(
+                "Home coordinates are not set in Home Assistant. "
+                "Please set your home location in Settings → System → General."
+            )
             return None
-        return float(lat), float(lon)
+        return f"{lat},{lon}"
+
+    async def _get_driving_distance(
+        self, destination: str
+    ) -> tuple[float, float] | None:
+        """
+        Return (driving_distance_km, duration_min) from home to destination via
+        Google Maps Distance Matrix API, with in-memory caching.
+        """
+        if destination in self._distance_cache:
+            return self._distance_cache[destination]
+
+        origin = self._home_origin()
+        if origin is None:
+            return None
+
+        params = {
+            "origins": origin,
+            "destinations": destination,
+            "mode": "driving",
+            "units": "metric",
+            "key": self._api_key,
+        }
+
+        try:
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(
+                    GOOGLE_DISTANCE_MATRIX_URL, params=params
+                ) as resp:
+                    resp.raise_for_status()
+                    data = await resp.json()
+
+            top_status = data.get("status")
+            if top_status != "OK":
+                _LOGGER.warning(
+                    "Distance Matrix API returned top-level status '%s' for '%s'",
+                    top_status,
+                    destination,
+                )
+                return None
+
+            element = data["rows"][0]["elements"][0]
+            el_status = element.get("status")
+            if el_status != "OK":
+                _LOGGER.warning(
+                    "Distance Matrix element status '%s' for destination '%s'",
+                    el_status,
+                    destination,
+                )
+                return None
+
+            distance_km = round(element["distance"]["value"] / 1000, 1)
+            duration_min = round(element["duration"]["value"] / 60, 0)
+
+            result = (distance_km, duration_min)
+            self._distance_cache[destination] = result
+            _LOGGER.debug(
+                "Driving distance to '%s': %.1f km, %.0f min",
+                destination,
+                distance_km,
+                duration_min,
+            )
+            return result
+
+        except aiohttp.ClientError as exc:
+            _LOGGER.error(
+                "Network error fetching driving distance for '%s': %s", destination, exc
+            )
+        except Exception as exc:
+            _LOGGER.error(
+                "Unexpected error fetching driving distance for '%s': %s", destination, exc
+            )
+
+        return None
 
     def _read_sensor_float(self, entity_id: str) -> float | None:
         """Read a numeric sensor state as float, returning None on failure."""
@@ -182,7 +221,11 @@ class SmartTripPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         unit = (state.attributes.get("unit_of_measurement") or "").lower()
         if unit in ("mi", "miles", "mile"):
-            _LOGGER.debug("Range sensor %s is in miles (%s mi) — converting to km", entity_id, value)
+            _LOGGER.debug(
+                "Range sensor %s is in miles (%s mi) — converting to km",
+                entity_id,
+                value,
+            )
             return round(value * MILES_TO_KM, 1)
         return value
 
@@ -206,6 +249,7 @@ class SmartTripPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 KEY_NEXT_EVENT_LOCATION: None,
                 KEY_NEXT_EVENT_START: None,
                 KEY_TRIP_DISTANCE_KM: None,
+                KEY_TRIP_DURATION_MIN: None,
                 KEY_EV_BATTERY_PERCENT: battery_pct,
                 KEY_EV_RANGE_KM: ev_range_km,
                 KEY_REQUIRED_RANGE_KM: None,
@@ -215,16 +259,15 @@ class SmartTripPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         summary, location, start_dt = event_result
 
-        # --- Geocode the event location ---
-        home = self._home_coordinates()
+        # --- Get driving distance + duration via Google Maps ---
         trip_distance_km: float | None = None
-        geocode_ok = False
+        trip_duration_min: float | None = None
+        lookup_ok = False
 
-        if home is not None:
-            coords = await self._geocode(location)
-            if coords is not None:
-                trip_distance_km = _haversine_km(home[0], home[1], coords[0], coords[1])
-                geocode_ok = True
+        driving = await self._get_driving_distance(location)
+        if driving is not None:
+            trip_distance_km, trip_duration_min = driving
+            lookup_ok = True
 
         # --- Compute required range (trip + buffer) ---
         required_range_km: float | None = None
@@ -239,10 +282,11 @@ class SmartTripPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             KEY_NEXT_EVENT_SUMMARY: summary,
             KEY_NEXT_EVENT_LOCATION: location,
             KEY_NEXT_EVENT_START: start_dt,
-            KEY_TRIP_DISTANCE_KM: round(trip_distance_km, 1) if trip_distance_km is not None else None,
+            KEY_TRIP_DISTANCE_KM: trip_distance_km,
+            KEY_TRIP_DURATION_MIN: trip_duration_min,
             KEY_EV_BATTERY_PERCENT: battery_pct,
             KEY_EV_RANGE_KM: ev_range_km,
             KEY_REQUIRED_RANGE_KM: required_range_km,
             KEY_NEEDS_CHARGING: needs_charging,
-            KEY_GEOCODE_SUCCESS: geocode_ok,
+            KEY_GEOCODE_SUCCESS: lookup_ok,
         }
