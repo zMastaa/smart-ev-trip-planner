@@ -90,31 +90,53 @@ All distance sensors use `SensorDeviceClass.DISTANCE` so Home Assistant automati
 
 ## Google Maps API usage
 
-Every unique origin→destination pair is fetched once per HA session and then cached in memory, so the same location is never looked up twice while HA is running. Calls are only made on a refresh cycle (every 30 minutes) when a new, uncached location is encountered.
+### What is an element?
 
-### How many API calls per refresh?
+The Distance Matrix API bills by **elements**, not by requests. Each request contains one or more origin→destination pairs, and `elements = number of origins × number of destinations`. This integration always sends **1 origin and 1 destination per request**, so every request consumes exactly **1 element**.
 
-**Next trip:** always 1 call (Home → next event).
+The free tier covers **10,000 elements per month**.
 
-**Tomorrow's events:** depends on the number of events with locations.
+### Caching
 
-> **Example: 3 events tomorrow** (e.g. gym, dentist, dinner)
->
-> Sequential route legs: Home→Gym, Gym→Dentist, Dentist→Dinner, Dinner→Home = **4 calls**
-> Round-trip outbound legs: Home→Gym, Home→Dentist, Home→Dinner = **3 calls** *(but Home→Gym and Home→Dentist were already cached from the sequential pass, so only 1 new call)*
->
-> **Total new API calls on first refresh: 1 (next trip) + 4 (sequential) + 1 (uncached round-trip leg) = 6**
+Every unique origin→destination pair is fetched once per HA session and then cached in memory, so the same leg is never looked up twice while HA is running. API calls are only made on a 30-minute refresh cycle when a new, uncached leg is encountered.
 
-> **Example: 5 events tomorrow** (e.g. school run, coffee, physio, supermarket, football)
->
-> Sequential legs: Home→E1, E1→E2, E2→E3, E3→E4, E4→E5, E5→Home = **6 calls**
-> Round-trip outbound legs: Home→E1 through Home→E5 = **5 calls** *(Home→E1 already cached, so 4 new calls)*
->
-> **Total new API calls on first refresh: 1 (next trip) + 6 (sequential) + 4 (uncached round-trip legs) = 11**
+### How many elements per day?
 
-On subsequent refreshes the cache is hit for all known locations, so **0 additional API calls** are made unless an event's location string changes.
+The table below shows the worst-case element count on the **first refresh of the day** (cold cache), broken down by the number of tomorrow's events with a location. The next-trip lookup adds 1 element on top if its destination is not already in the cache.
 
-The [Distance Matrix API free tier](https://mapsplatform.google.com/pricing/) covers 40,000 elements per month at no cost, which is far more than this integration will consume in normal use.
+| Events tomorrow | Sequential legs | Round-trip new legs* | Total elements (first refresh) |
+|:-:|---|---|:-:|
+| 1 | Home→E1, E1→Home = **2** | Home→E1 already cached = **0** | **2** |
+| 2 | Home→E1, E1→E2, E2→Home = **3** | Home→E2 not cached = **1** | **4** |
+| 3 | Home→E1, E1→E2, E2→E3, E3→Home = **4** | Home→E2, Home→E3 not cached = **2** | **6** |
+| 4 | Home→E1 … E4→Home = **5** | Home→E2, Home→E3, Home→E4 not cached = **3** | **8** |
+| 5 | Home→E1 … E5→Home = **6** | Home→E2 … Home→E5 not cached = **4** | **10** |
+
+\* The round-trip pass always reuses `Home→E1` from the sequential pass. Each subsequent `Home→Ei` is a new leg.
+
+**Example — 3 events tomorrow** (gym, dentist, dinner):
+
+```
+Sequential pass  (4 elements):  Home→Gym, Gym→Dentist, Dentist→Dinner, Dinner→Home
+Round-trip pass  (2 elements):  Home→Dentist, Home→Dinner  ← Home→Gym already cached
+Next trip        (1 element):   Home→next event             ← likely already cached too
+─────────────────────────────────────────────────────────
+First refresh total:  7 elements
+Subsequent refreshes: 0 elements (full cache hit)
+```
+
+**Example — 5 events tomorrow** (school run, coffee, physio, supermarket, football):
+
+```
+Sequential pass  (6 elements):  Home→E1, E1→E2, E2→E3, E3→E4, E4→E5, E5→Home
+Round-trip pass  (4 elements):  Home→E2, Home→E3, Home→E4, Home→E5  ← Home→E1 cached
+Next trip        (1 element):   Home→next event
+─────────────────────────────────────────────────────────
+First refresh total:  11 elements
+Subsequent refreshes: 0 elements (full cache hit)
+```
+
+At a maximum of ~11 elements per day on the most demanding schedule, and with the cache eliminating all repeat lookups, a typical month's usage sits well under 400 elements — well within the 10,000 element free tier.
 
 ## Example automations
 
