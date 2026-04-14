@@ -24,6 +24,12 @@ from .const import (
     KEY_NEXT_EVENT_START,
     KEY_NEXT_EVENT_SUMMARY,
     KEY_REQUIRED_RANGE_KM,
+    KEY_TOMORROW_EVENT_COUNT,
+    KEY_TOMORROW_EVENTS,
+    KEY_TOMORROW_REQUIRED_RANGE_KM,
+    KEY_TOMORROW_ROUTE_DESCRIPTION,
+    KEY_TOMORROW_TOTAL_DISTANCE_KM,
+    KEY_TOMORROW_TOTAL_DURATION_MIN,
     KEY_TRIP_DISTANCE_KM,
     KEY_TRIP_DURATION_MIN,
 )
@@ -99,6 +105,37 @@ SENSOR_DESCRIPTIONS: tuple[TripSensorEntityDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda d: d.get(KEY_TRIP_DURATION_MIN),
     ),
+    # ── Tomorrow ──────────────────────────────────────────────────────
+    TripSensorEntityDescription(
+        key="tomorrow_events",
+        name="Tomorrow's Events with Location",
+        icon="mdi:calendar-multiple",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda d: d.get(KEY_TOMORROW_EVENT_COUNT, 0),
+        extra_attr_fn=lambda d: {"events": d.get(KEY_TOMORROW_EVENTS, [])},
+    ),
+    TripSensorEntityDescription(
+        key="tomorrow_total_distance",
+        name="Tomorrow's Total Driving Distance",
+        icon="mdi:map-marker-path",
+        device_class=SensorDeviceClass.DISTANCE,
+        native_unit_of_measurement="km",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda d: d.get(KEY_TOMORROW_TOTAL_DISTANCE_KM),
+        extra_attr_fn=lambda d: {
+            "required_range_km": d.get(KEY_TOMORROW_REQUIRED_RANGE_KM),
+            "route": d.get(KEY_TOMORROW_ROUTE_DESCRIPTION),
+        },
+    ),
+    TripSensorEntityDescription(
+        key="tomorrow_total_duration",
+        name="Tomorrow's Total Driving Duration",
+        icon="mdi:timer-sand",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement="min",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda d: d.get(KEY_TOMORROW_TOTAL_DURATION_MIN),
+    ),
 )
 
 
@@ -136,8 +173,7 @@ class SmartTripSensor(
         )
         self._attr_device_info = {
             "identifiers": {(DOMAIN, coordinator.entry.entry_id)},
-            "name": "Smart Trip Planner",
-            "manufacturer": "Community",
+            "name": "Smart EV Trip Planner",
             "model": "EV Trip Advisor",
         }
 

@@ -20,8 +20,10 @@ from .const import (
     CONF_CALENDAR_ENTITY,
     CONF_GOOGLE_MAPS_API_KEY,
     CONF_RANGE_ENTITY,
+    CONF_ROUTING_MODE,
     DEFAULT_BUFFER_PERCENT,
     DEFAULT_LOOKAHEAD_DAYS,
+    DEFAULT_ROUTING_MODE,
     DOMAIN,
     GOOGLE_DISTANCE_MATRIX_URL,
     KEY_EV_BATTERY_PERCENT,
@@ -32,8 +34,17 @@ from .const import (
     KEY_NEXT_EVENT_START,
     KEY_NEXT_EVENT_SUMMARY,
     KEY_REQUIRED_RANGE_KM,
+    KEY_TOMORROW_EVENT_COUNT,
+    KEY_TOMORROW_EVENTS,
+    KEY_TOMORROW_NEEDS_CHARGING,
+    KEY_TOMORROW_REQUIRED_RANGE_KM,
+    KEY_TOMORROW_ROUTE_DESCRIPTION,
+    KEY_TOMORROW_TOTAL_DISTANCE_KM,
+    KEY_TOMORROW_TOTAL_DURATION_MIN,
     KEY_TRIP_DISTANCE_KM,
     KEY_TRIP_DURATION_MIN,
+    ROUTING_MODE_ROUND_TRIP,
+    ROUTING_MODE_SEQUENTIAL,
     UPDATE_INTERVAL_MINUTES,
 )
 
@@ -55,9 +66,10 @@ class SmartTripPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             CONF_BUFFER_PERCENT, DEFAULT_BUFFER_PERCENT
         )
         self._api_key: str = entry.data[CONF_GOOGLE_MAPS_API_KEY]
+        self.routing_mode: str = entry.data.get(CONF_ROUTING_MODE, DEFAULT_ROUTING_MODE)
 
-        # Cache: location string → (driving_distance_km, duration_min)
-        self._distance_cache: dict[str, tuple[float, float]] = {}
+        # Cache: (origin, destination) → (driving_distance_km, duration_min)
+        self._distance_cache: dict[tuple[str, str], tuple[float, float]] = {}
 
         super().__init__(
             hass,
@@ -77,42 +89,8 @@ class SmartTripPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # Internal helpers
     # ------------------------------------------------------------------
 
-    async def _get_next_event_with_location(
-        self,
-    ) -> tuple[str, str, datetime] | None:
-        """Return (summary, location, start_dt) for the next event that has a location."""
-        now = dt_util.now()
-        end = now + timedelta(days=DEFAULT_LOOKAHEAD_DAYS)
-
-        try:
-            component = self.hass.data.get(CALENDAR_DOMAIN)
-            if component is None:
-                _LOGGER.warning("Calendar component not found in hass.data")
-                return None
-
-            entity: CalendarEntity | None = component.get_entity(
-                self.calendar_entity_id
-            )
-            if entity is None:
-                _LOGGER.warning(
-                    "Calendar entity %s not found", self.calendar_entity_id
-                )
-                return None
-
-            events = await entity.async_get_events(self.hass, now, end)
-        except Exception as exc:
-            _LOGGER.error("Error fetching calendar events: %s", exc)
-            return None
-
-        for event in sorted(events, key=lambda e: e.start_datetime_local):
-            location = getattr(event, "location", None) or ""
-            if location.strip():
-                return event.summary, location.strip(), event.start_datetime_local
-
-        return None
-
     def _home_origin(self) -> str | None:
-        """Return the HA home location as a 'lat,lon' string for the Distance Matrix origin."""
+        """Return the HA home location as a 'lat,lon' string for use as a route origin."""
         lat = self.hass.config.latitude
         lon = self.hass.config.longitude
         if lat is None or lon is None:
@@ -123,19 +101,69 @@ class SmartTripPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return None
         return f"{lat},{lon}"
 
+    async def _get_calendar_events(
+        self, start: datetime, end: datetime
+    ) -> list[Any]:
+        """Fetch raw events from the configured calendar entity."""
+        component = self.hass.data.get(CALENDAR_DOMAIN)
+        if component is None:
+            _LOGGER.warning("Calendar component not found in hass.data")
+            return []
+
+        entity: CalendarEntity | None = component.get_entity(self.calendar_entity_id)
+        if entity is None:
+            _LOGGER.warning("Calendar entity %s not found", self.calendar_entity_id)
+            return []
+
+        try:
+            return await entity.async_get_events(self.hass, start, end)
+        except Exception as exc:
+            _LOGGER.error("Error fetching calendar events: %s", exc)
+            return []
+
+    async def _get_next_event_with_location(
+        self,
+    ) -> tuple[str, str, datetime] | None:
+        """Return (summary, location, start_dt) for the next upcoming event with a location."""
+        now = dt_util.now()
+        events = await self._get_calendar_events(now, now + timedelta(days=DEFAULT_LOOKAHEAD_DAYS))
+
+        for event in sorted(events, key=lambda e: e.start_datetime_local):
+            location = getattr(event, "location", None) or ""
+            if location.strip():
+                return event.summary, location.strip(), event.start_datetime_local
+
+        return None
+
+    async def _get_tomorrow_events_with_locations(
+        self,
+    ) -> list[tuple[str, str, datetime]]:
+        """Return all tomorrow events that have a location, sorted by start time."""
+        now = dt_util.now()
+        tomorrow_start = dt_util.start_of_local_day(now + timedelta(days=1))
+        tomorrow_end = tomorrow_start + timedelta(days=1)
+
+        events = await self._get_calendar_events(tomorrow_start, tomorrow_end)
+
+        result = []
+        for event in sorted(events, key=lambda e: e.start_datetime_local):
+            location = getattr(event, "location", None) or ""
+            if location.strip():
+                result.append(
+                    (event.summary, location.strip(), event.start_datetime_local)
+                )
+        return result
+
     async def _get_driving_distance(
-        self, destination: str
+        self, origin: str, destination: str
     ) -> tuple[float, float] | None:
         """
-        Return (driving_distance_km, duration_min) from home to destination via
-        Google Maps Distance Matrix API, with in-memory caching.
+        Return (driving_distance_km, duration_min) between any two points via
+        Google Maps Distance Matrix API, with in-memory caching per (origin, destination) pair.
         """
-        if destination in self._distance_cache:
-            return self._distance_cache[destination]
-
-        origin = self._home_origin()
-        if origin is None:
-            return None
+        cache_key = (origin, destination)
+        if cache_key in self._distance_cache:
+            return self._distance_cache[cache_key]
 
         params = {
             "origins": origin,
@@ -157,8 +185,9 @@ class SmartTripPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             top_status = data.get("status")
             if top_status != "OK":
                 _LOGGER.warning(
-                    "Distance Matrix API returned top-level status '%s' for '%s'",
+                    "Distance Matrix API returned top-level status '%s' for '%s' → '%s'",
                     top_status,
+                    origin,
                     destination,
                 )
                 return None
@@ -167,8 +196,9 @@ class SmartTripPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             el_status = element.get("status")
             if el_status != "OK":
                 _LOGGER.warning(
-                    "Distance Matrix element status '%s' for destination '%s'",
+                    "Distance Matrix element status '%s' for '%s' → '%s'",
                     el_status,
+                    origin,
                     destination,
                 )
                 return None
@@ -177,9 +207,10 @@ class SmartTripPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             duration_min = round(element["duration"]["value"] / 60, 0)
 
             result = (distance_km, duration_min)
-            self._distance_cache[destination] = result
+            self._distance_cache[cache_key] = result
             _LOGGER.debug(
-                "Driving distance to '%s': %.1f km, %.0f min",
+                "Driving '%s' → '%s': %.1f km, %.0f min",
+                origin,
                 destination,
                 distance_km,
                 duration_min,
@@ -188,14 +219,83 @@ class SmartTripPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         except aiohttp.ClientError as exc:
             _LOGGER.error(
-                "Network error fetching driving distance for '%s': %s", destination, exc
+                "Network error fetching driving distance '%s' → '%s': %s",
+                origin,
+                destination,
+                exc,
             )
         except Exception as exc:
             _LOGGER.error(
-                "Unexpected error fetching driving distance for '%s': %s", destination, exc
+                "Unexpected error fetching driving distance '%s' → '%s': %s",
+                origin,
+                destination,
+                exc,
             )
 
         return None
+
+    async def _get_sequential_route_distance(
+        self, home: str, locations: list[str]
+    ) -> tuple[float, float] | None:
+        """
+        Home → E1 → E2 → ... → EN → Home  (events visited in chronological order).
+        Returns (total_km, total_min), or None if any leg cannot be resolved.
+        """
+        stops = [home, *locations, home]
+        total_km = 0.0
+        total_min = 0.0
+
+        for i in range(len(stops) - 1):
+            leg = await self._get_driving_distance(stops[i], stops[i + 1])
+            if leg is None:
+                _LOGGER.warning(
+                    "Could not calculate leg %d of tomorrow's sequential route "
+                    "('%s' → '%s'). Tomorrow totals will be unavailable.",
+                    i + 1,
+                    stops[i],
+                    stops[i + 1],
+                )
+                return None
+            total_km += leg[0]
+            total_min += leg[1]
+
+        return round(total_km, 1), round(total_min, 0)
+
+    async def _get_round_trip_route_distance(
+        self, home: str, locations: list[str]
+    ) -> tuple[float, float] | None:
+        """
+        Home → E1 → Home, Home → E2 → Home, …  (independent round trip per event).
+        The return leg reuses the cached outbound distance (roads are symmetric).
+        Returns (total_km, total_min), or None if any outbound leg cannot be resolved.
+        """
+        total_km = 0.0
+        total_min = 0.0
+
+        for i, loc in enumerate(locations):
+            leg = await self._get_driving_distance(home, loc)
+            if leg is None:
+                _LOGGER.warning(
+                    "Could not calculate outbound leg %d of tomorrow's round-trip route "
+                    "('%s' → '%s'). Tomorrow totals will be unavailable.",
+                    i + 1,
+                    home,
+                    loc,
+                )
+                return None
+            # Count outbound + return (both legs assumed equal distance)
+            total_km += leg[0] * 2
+            total_min += leg[1] * 2
+
+        return round(total_km, 1), round(total_min, 0)
+
+    async def _get_total_route_distance(
+        self, home: str, locations: list[str]
+    ) -> tuple[float, float] | None:
+        """Dispatch to the correct routing method based on self.routing_mode."""
+        if self.routing_mode == ROUTING_MODE_ROUND_TRIP:
+            return await self._get_round_trip_route_distance(home, locations)
+        return await self._get_sequential_route_distance(home, locations)
 
     def _read_sensor_float(self, entity_id: str) -> float | None:
         """Read a numeric sensor state as float, returning None on failure."""
@@ -234,51 +334,71 @@ class SmartTripPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # ------------------------------------------------------------------
 
     async def _async_update_data(self) -> dict[str, Any]:
-        """Fetch all data, compute charge requirement, and return a state dict."""
+        """Fetch all data, compute charge requirements, and return a state dict."""
 
         # --- EV sensors ---
         battery_pct = self._read_sensor_float(self.battery_entity_id)
         ev_range_km = self._read_range_as_km(self.range_entity_id)
+        buffer_factor = 1.0 + (self.buffer_percent / 100.0)
 
-        # --- Next calendar event with a location ---
+        # ── Next upcoming event ────────────────────────────────────────
         event_result = await self._get_next_event_with_location()
 
-        if event_result is None:
-            return {
-                KEY_NEXT_EVENT_SUMMARY: None,
-                KEY_NEXT_EVENT_LOCATION: None,
-                KEY_NEXT_EVENT_START: None,
-                KEY_TRIP_DISTANCE_KM: None,
-                KEY_TRIP_DURATION_MIN: None,
-                KEY_EV_BATTERY_PERCENT: battery_pct,
-                KEY_EV_RANGE_KM: ev_range_km,
-                KEY_REQUIRED_RANGE_KM: None,
-                KEY_NEEDS_CHARGING: False,
-                KEY_GEOCODE_SUCCESS: False,
-            }
-
-        summary, location, start_dt = event_result
-
-        # --- Get driving distance + duration via Google Maps ---
         trip_distance_km: float | None = None
         trip_duration_min: float | None = None
-        lookup_ok = False
-
-        driving = await self._get_driving_distance(location)
-        if driving is not None:
-            trip_distance_km, trip_duration_min = driving
-            lookup_ok = True
-
-        # --- Compute required range (trip + buffer) ---
         required_range_km: float | None = None
         needs_charging = False
+        lookup_ok = False
+        summary = location = start_dt = None
 
-        if trip_distance_km is not None and ev_range_km is not None:
-            buffer_factor = 1.0 + (self.buffer_percent / 100.0)
-            required_range_km = round(trip_distance_km * buffer_factor, 1)
-            needs_charging = ev_range_km < required_range_km
+        if event_result is not None:
+            summary, location, start_dt = event_result
+            home = self._home_origin()
+            if home is not None:
+                driving = await self._get_driving_distance(home, location)
+                if driving is not None:
+                    trip_distance_km, trip_duration_min = driving
+                    lookup_ok = True
+
+            if trip_distance_km is not None and ev_range_km is not None:
+                required_range_km = round(trip_distance_km * buffer_factor, 1)
+                needs_charging = ev_range_km < required_range_km
+
+        # ── Tomorrow's events ──────────────────────────────────────────
+        tomorrow_events_raw = await self._get_tomorrow_events_with_locations()
+        tomorrow_locations = [loc for _, loc, _ in tomorrow_events_raw]
+
+        tomorrow_total_km: float | None = None
+        tomorrow_total_min: float | None = None
+        tomorrow_required_km: float | None = None
+        tomorrow_needs_charging = False
+        tomorrow_home = self._home_origin()
+
+        if tomorrow_events_raw and tomorrow_home is not None:
+            route = await self._get_total_route_distance(tomorrow_home, tomorrow_locations)
+            if route is not None:
+                tomorrow_total_km, tomorrow_total_min = route
+                if ev_range_km is not None:
+                    tomorrow_required_km = round(tomorrow_total_km * buffer_factor, 1)
+                    tomorrow_needs_charging = ev_range_km < tomorrow_required_km
+
+        # Human-readable description of the route mode in use
+        if self.routing_mode == ROUTING_MODE_ROUND_TRIP:
+            route_desc = "Home → each event → Home (independent round trips)"
+        else:
+            route_desc = "Home → events in order → Home (sequential)"
+
+        tomorrow_events_list = [
+            {
+                "summary": s,
+                "location": loc,
+                "start": t.isoformat(),
+            }
+            for s, loc, t in tomorrow_events_raw
+        ]
 
         return {
+            # Next event
             KEY_NEXT_EVENT_SUMMARY: summary,
             KEY_NEXT_EVENT_LOCATION: location,
             KEY_NEXT_EVENT_START: start_dt,
@@ -289,4 +409,12 @@ class SmartTripPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             KEY_REQUIRED_RANGE_KM: required_range_km,
             KEY_NEEDS_CHARGING: needs_charging,
             KEY_GEOCODE_SUCCESS: lookup_ok,
+            # Tomorrow
+            KEY_TOMORROW_EVENT_COUNT: len(tomorrow_events_raw),
+            KEY_TOMORROW_EVENTS: tomorrow_events_list,
+            KEY_TOMORROW_TOTAL_DISTANCE_KM: tomorrow_total_km,
+            KEY_TOMORROW_TOTAL_DURATION_MIN: tomorrow_total_min,
+            KEY_TOMORROW_REQUIRED_RANGE_KM: tomorrow_required_km,
+            KEY_TOMORROW_NEEDS_CHARGING: tomorrow_needs_charging,
+            KEY_TOMORROW_ROUTE_DESCRIPTION: route_desc,
         }
