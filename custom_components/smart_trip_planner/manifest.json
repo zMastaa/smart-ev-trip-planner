@@ -1,0 +1,17 @@
+{
+  "domain": "smart_ev_trip_planner",
+  "name": "Smart Trip Planner",
+  "version": "1.0.0",
+  "config_flow": true,
+  "documentation": "https://github.com/yourusername/smart-trip-planner",
+  "issue_tracker": "https://github.com/yourusername/smart-trip-planner/issues",
+  "requirements": [
+    "geopy>=2.4.0"
+  ],
+  "dependencies": [],
+  "after_dependencies": ["calendar"],
+  "codeowners": ["@yourusername"],
+  "iot_class": "local_polling",
+  "integration_type": "service",
+  "loggers": ["custom_components.smart_ev_trip_planner"]
+}

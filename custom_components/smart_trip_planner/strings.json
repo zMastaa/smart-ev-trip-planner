@@ -1,0 +1,30 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Smart Trip Planner Setup",
+        "description": "Connect your Home Assistant Calendar and EV sensors so the planner can alert you when your EV needs charging before an upcoming trip.",
+        "data": {
+          "calendar_entity": "Calendar",
+          "battery_entity": "EV Battery Level Sensor",
+          "range_entity": "EV Estimated Range Sensor",
+          "buffer_percent": "Charge Buffer (%)"
+        },
+        "data_description": {
+          "calendar_entity": "The calendar to monitor for upcoming events with locations.",
+          "battery_entity": "Sensor reporting your EV's current battery percentage.",
+          "range_entity": "Sensor reporting your EV's current estimated range (km or mi).",
+          "buffer_percent": "Extra range margin added on top of the trip distance."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to calendar entity.",
+      "invalid_sensor": "Could not read value from the selected EV sensor.",
+      "unknown": "An unexpected error occurred."
+    },
+    "abort": {
+      "already_configured": "Smart Trip Planner is already configured."
+    }
+  }
+}
