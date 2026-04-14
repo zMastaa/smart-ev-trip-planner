@@ -1,11 +1,12 @@
 """DataUpdateCoordinator for Smart Trip Planner."""
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import datetime, timedelta
 from math import asin, cos, radians, sin, sqrt
 from typing import Any
+
+import aiohttp
 
 from homeassistant.components.calendar import CalendarEntity
 from homeassistant.components.calendar import DOMAIN as CALENDAR_DOMAIN
@@ -35,6 +36,8 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+MILES_TO_KM = 1.60934
 
 
 def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -116,31 +119,36 @@ class SmartTripPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return None
 
     async def _geocode(self, location: str) -> tuple[float, float] | None:
-        """Geocode a location string to (lat, lon), using cache to avoid repeat calls."""
+        """Geocode a location string to (lat, lon) via Nominatim, with in-memory caching."""
         if location in self._geocode_cache:
             return self._geocode_cache[location]
 
+        url = "https://nominatim.openstreetmap.org/search"
+        params = {"q": location, "format": "json", "limit": "1"}
+        headers = {"User-Agent": f"HomeAssistant-{DOMAIN}/1.0"}
+
         try:
-            from geopy.geocoders import Nominatim
-            from geopy.adapters import AioHTTPAdapter
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with aiohttp.ClientSession(headers=headers, timeout=timeout) as session:
+                async with session.get(url, params=params) as resp:
+                    resp.raise_for_status()
+                    results = await resp.json()
 
-            async with Nominatim(
-                user_agent=f"ha_{DOMAIN}",
-                adapter_factory=AioHTTPAdapter,
-            ) as geolocator:
-                result = await geolocator.geocode(location, timeout=10)
-
-            if result is None:
-                _LOGGER.warning("Could not geocode location: %s", location)
+            if not results:
+                _LOGGER.warning("Nominatim returned no results for location: '%s'", location)
                 return None
 
-            coords = (result.latitude, result.longitude)
+            coords = (float(results[0]["lat"]), float(results[0]["lon"]))
             self._geocode_cache[location] = coords
+            _LOGGER.debug("Geocoded '%s' → %s", location, coords)
             return coords
 
+        except aiohttp.ClientError as exc:
+            _LOGGER.error("Network error geocoding '%s': %s", location, exc)
         except Exception as exc:
-            _LOGGER.error("Geocoding error for '%s': %s", location, exc)
-            return None
+            _LOGGER.error("Unexpected geocoding error for '%s': %s", location, exc)
+
+        return None
 
     def _home_coordinates(self) -> tuple[float, float] | None:
         """Return HA home (lat, lon) from the config, or None."""
@@ -161,6 +169,23 @@ class SmartTripPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.warning("Non-numeric state '%s' for %s", state.state, entity_id)
             return None
 
+    def _read_range_as_km(self, entity_id: str) -> float | None:
+        """Read a range sensor and always return its value in km, converting from miles if needed."""
+        state = self.hass.states.get(entity_id)
+        if state is None or state.state in ("unknown", "unavailable", ""):
+            return None
+        try:
+            value = float(state.state)
+        except ValueError:
+            _LOGGER.warning("Non-numeric state '%s' for %s", state.state, entity_id)
+            return None
+
+        unit = (state.attributes.get("unit_of_measurement") or "").lower()
+        if unit in ("mi", "miles", "mile"):
+            _LOGGER.debug("Range sensor %s is in miles (%s mi) — converting to km", entity_id, value)
+            return round(value * MILES_TO_KM, 1)
+        return value
+
     # ------------------------------------------------------------------
     # DataUpdateCoordinator core
     # ------------------------------------------------------------------
@@ -170,7 +195,7 @@ class SmartTripPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # --- EV sensors ---
         battery_pct = self._read_sensor_float(self.battery_entity_id)
-        ev_range_km = self._read_sensor_float(self.range_entity_id)
+        ev_range_km = self._read_range_as_km(self.range_entity_id)
 
         # --- Next calendar event with a location ---
         event_result = await self._get_next_event_with_location()

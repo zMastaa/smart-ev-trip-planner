@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from homeassistant.components.sensor import (
+    SensorDeviceClass,
     SensorEntity,
     SensorEntityDescription,
     SensorStateClass,
@@ -57,6 +58,7 @@ SENSOR_DESCRIPTIONS: tuple[TripSensorEntityDescription, ...] = (
         key="trip_distance",
         name="Trip Distance",
         icon="mdi:map-marker-distance",
+        device_class=SensorDeviceClass.DISTANCE,
         native_unit_of_measurement="km",
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda d: d.get(KEY_TRIP_DISTANCE_KM),
@@ -65,6 +67,7 @@ SENSOR_DESCRIPTIONS: tuple[TripSensorEntityDescription, ...] = (
         key="ev_range",
         name="EV Current Range",
         icon="mdi:battery-charging",
+        device_class=SensorDeviceClass.DISTANCE,
         native_unit_of_measurement="km",
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda d: d.get(KEY_EV_RANGE_KM),
@@ -73,6 +76,7 @@ SENSOR_DESCRIPTIONS: tuple[TripSensorEntityDescription, ...] = (
         key="required_range",
         name="Required Range",
         icon="mdi:map-check",
+        device_class=SensorDeviceClass.DISTANCE,
         native_unit_of_measurement="km",
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda d: d.get(KEY_REQUIRED_RANGE_KM),

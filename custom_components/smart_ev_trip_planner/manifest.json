@@ -5,9 +5,7 @@
   "config_flow": true,
   "documentation": "https://github.com/zmastaa/smart-ev-trip-planner",
   "issue_tracker": "https://github.com/zmastaa/smart-ev-trip-planner/issues",
-  "requirements": [
-    "geopy>=2.4.0"
-  ],
+  "requirements": [],
   "dependencies": [],
   "after_dependencies": ["calendar"],
   "codeowners": ["@zmastaa"],
