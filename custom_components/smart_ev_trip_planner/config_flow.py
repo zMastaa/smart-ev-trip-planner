@@ -18,14 +18,10 @@ from .const import (
     CONF_CALENDAR_ENTITY,
     CONF_GOOGLE_MAPS_API_KEY,
     CONF_RANGE_ENTITY,
-    CONF_ROUTING_MODE,
     DEFAULT_BUFFER_PERCENT,
     DEFAULT_NAME,
-    DEFAULT_ROUTING_MODE,
     DOMAIN,
     GOOGLE_DISTANCE_MATRIX_URL,
-    ROUTING_MODE_ROUND_TRIP,
-    ROUTING_MODE_SEQUENTIAL,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -64,24 +60,6 @@ def _build_schema(defaults: dict | None = None) -> vol.Schema:
                     step=5,
                     unit_of_measurement="%",
                     mode=selector.NumberSelectorMode.SLIDER,
-                )
-            ),
-            vol.Optional(
-                CONF_ROUTING_MODE,
-                default=d.get(CONF_ROUTING_MODE, DEFAULT_ROUTING_MODE),
-            ): selector.SelectSelector(
-                selector.SelectSelectorConfig(
-                    options=[
-                        selector.SelectOptionDict(
-                            value=ROUTING_MODE_SEQUENTIAL,
-                            label="Sequential — Home → E1 → E2 → Home",
-                        ),
-                        selector.SelectOptionDict(
-                            value=ROUTING_MODE_ROUND_TRIP,
-                            label="Round trip per event — Home → E1 → Home, Home → E2 → Home",
-                        ),
-                    ],
-                    mode=selector.SelectSelectorMode.LIST,
                 )
             ),
             vol.Required(

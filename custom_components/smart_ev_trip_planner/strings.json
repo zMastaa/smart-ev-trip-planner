@@ -9,7 +9,6 @@
           "battery_entity": "EV Battery Level Sensor",
           "range_entity": "EV Estimated Range Sensor",
           "buffer_percent": "Charge Buffer (%)",
-          "routing_mode": "Tomorrow's Routing Mode",
           "google_maps_api_key": "Google Maps API Key"
         },
         "data_description": {
@@ -17,7 +16,6 @@
           "battery_entity": "Sensor reporting your EV's current battery percentage.",
           "range_entity": "Sensor reporting your EV's current estimated range (km or mi).",
           "buffer_percent": "Extra range margin added on top of the trip distance.",
-          "routing_mode": "How tomorrow's total driving distance is calculated. Sequential assumes you drive between events without returning home. Round trip assumes you return home between every event.",
           "google_maps_api_key": "API key from Google Cloud Console. Requires the Distance Matrix API to be enabled."
         }
       }

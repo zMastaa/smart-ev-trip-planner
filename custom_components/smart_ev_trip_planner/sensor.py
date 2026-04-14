@@ -1,4 +1,4 @@
-"""Sensor platform for Smart Trip Planner."""
+"""Sensor platform for Smart EV Trip Planner."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -26,10 +26,12 @@ from .const import (
     KEY_REQUIRED_RANGE_KM,
     KEY_TOMORROW_EVENT_COUNT,
     KEY_TOMORROW_EVENTS,
-    KEY_TOMORROW_REQUIRED_RANGE_KM,
-    KEY_TOMORROW_ROUTE_DESCRIPTION,
-    KEY_TOMORROW_TOTAL_DISTANCE_KM,
-    KEY_TOMORROW_TOTAL_DURATION_MIN,
+    KEY_TOMORROW_RT_DISTANCE_KM,
+    KEY_TOMORROW_RT_DURATION_MIN,
+    KEY_TOMORROW_RT_REQUIRED_KM,
+    KEY_TOMORROW_SEQ_DISTANCE_KM,
+    KEY_TOMORROW_SEQ_DURATION_MIN,
+    KEY_TOMORROW_SEQ_REQUIRED_KM,
     KEY_TRIP_DISTANCE_KM,
     KEY_TRIP_DURATION_MIN,
 )
@@ -51,6 +53,7 @@ def _format_event_start(dt: datetime | None) -> str | None:
 
 
 SENSOR_DESCRIPTIONS: tuple[TripSensorEntityDescription, ...] = (
+    # ── Next event ────────────────────────────────────────────────────
     TripSensorEntityDescription(
         key="next_event",
         name="Next Trip Event",
@@ -71,13 +74,13 @@ SENSOR_DESCRIPTIONS: tuple[TripSensorEntityDescription, ...] = (
         value_fn=lambda d: d.get(KEY_TRIP_DISTANCE_KM),
     ),
     TripSensorEntityDescription(
-        key="ev_range",
-        name="EV Current Range",
-        icon="mdi:battery-charging",
-        device_class=SensorDeviceClass.DISTANCE,
-        native_unit_of_measurement="km",
+        key="trip_duration",
+        name="Driving Duration",
+        icon="mdi:timer-outline",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement="min",
         state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda d: d.get(KEY_EV_RANGE_KM),
+        value_fn=lambda d: d.get(KEY_TRIP_DURATION_MIN),
     ),
     TripSensorEntityDescription(
         key="required_range",
@@ -89,6 +92,15 @@ SENSOR_DESCRIPTIONS: tuple[TripSensorEntityDescription, ...] = (
         value_fn=lambda d: d.get(KEY_REQUIRED_RANGE_KM),
     ),
     TripSensorEntityDescription(
+        key="ev_range",
+        name="EV Current Range",
+        icon="mdi:battery-charging",
+        device_class=SensorDeviceClass.DISTANCE,
+        native_unit_of_measurement="km",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda d: d.get(KEY_EV_RANGE_KM),
+    ),
+    TripSensorEntityDescription(
         key="ev_battery",
         name="EV Battery Level",
         icon="mdi:battery",
@@ -96,16 +108,7 @@ SENSOR_DESCRIPTIONS: tuple[TripSensorEntityDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda d: d.get(KEY_EV_BATTERY_PERCENT),
     ),
-    TripSensorEntityDescription(
-        key="trip_duration",
-        name="Driving Duration",
-        icon="mdi:timer-outline",
-        device_class=SensorDeviceClass.DURATION,
-        native_unit_of_measurement="min",
-        state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda d: d.get(KEY_TRIP_DURATION_MIN),
-    ),
-    # ── Tomorrow ──────────────────────────────────────────────────────
+    # ── Tomorrow — shared ─────────────────────────────────────────────
     TripSensorEntityDescription(
         key="tomorrow_events",
         name="Tomorrow's Events with Location",
@@ -114,27 +117,51 @@ SENSOR_DESCRIPTIONS: tuple[TripSensorEntityDescription, ...] = (
         value_fn=lambda d: d.get(KEY_TOMORROW_EVENT_COUNT, 0),
         extra_attr_fn=lambda d: {"events": d.get(KEY_TOMORROW_EVENTS, [])},
     ),
+    # ── Tomorrow — sequential (Home → E1 → E2 → … → EN → Home) ───────
     TripSensorEntityDescription(
-        key="tomorrow_total_distance",
-        name="Tomorrow's Total Driving Distance",
+        key="tomorrow_seq_distance",
+        name="Tomorrow Sequential Distance",
         icon="mdi:map-marker-path",
         device_class=SensorDeviceClass.DISTANCE,
         native_unit_of_measurement="km",
         state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda d: d.get(KEY_TOMORROW_TOTAL_DISTANCE_KM),
+        value_fn=lambda d: d.get(KEY_TOMORROW_SEQ_DISTANCE_KM),
         extra_attr_fn=lambda d: {
-            "required_range_km": d.get(KEY_TOMORROW_REQUIRED_RANGE_KM),
-            "route": d.get(KEY_TOMORROW_ROUTE_DESCRIPTION),
+            "required_range_km": d.get(KEY_TOMORROW_SEQ_REQUIRED_KM),
+            "route": "Home → E1 → E2 → … → EN → Home",
         },
     ),
     TripSensorEntityDescription(
-        key="tomorrow_total_duration",
-        name="Tomorrow's Total Driving Duration",
+        key="tomorrow_seq_duration",
+        name="Tomorrow Sequential Duration",
         icon="mdi:timer-sand",
         device_class=SensorDeviceClass.DURATION,
         native_unit_of_measurement="min",
         state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda d: d.get(KEY_TOMORROW_TOTAL_DURATION_MIN),
+        value_fn=lambda d: d.get(KEY_TOMORROW_SEQ_DURATION_MIN),
+    ),
+    # ── Tomorrow — round-trip (Home → Ei → Home per event) ────────────
+    TripSensorEntityDescription(
+        key="tomorrow_rt_distance",
+        name="Tomorrow Round Trip Distance",
+        icon="mdi:map-marker-path",
+        device_class=SensorDeviceClass.DISTANCE,
+        native_unit_of_measurement="km",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda d: d.get(KEY_TOMORROW_RT_DISTANCE_KM),
+        extra_attr_fn=lambda d: {
+            "required_range_km": d.get(KEY_TOMORROW_RT_REQUIRED_KM),
+            "route": "Home → E1 → Home, Home → E2 → Home, …",
+        },
+    ),
+    TripSensorEntityDescription(
+        key="tomorrow_rt_duration",
+        name="Tomorrow Round Trip Duration",
+        icon="mdi:timer-sand",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement="min",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda d: d.get(KEY_TOMORROW_RT_DURATION_MIN),
     ),
 )
 
@@ -168,9 +195,7 @@ class SmartTripSensor(
         """Initialise the sensor."""
         super().__init__(coordinator)
         self.entity_description = description
-        self._attr_unique_id = (
-            f"{coordinator.entry.entry_id}_{description.key}"
-        )
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_{description.key}"
         self._attr_device_info = {
             "identifiers": {(DOMAIN, coordinator.entry.entry_id)},
             "name": "Smart EV Trip Planner",

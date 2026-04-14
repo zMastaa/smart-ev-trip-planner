@@ -20,10 +20,8 @@ from .const import (
     CONF_CALENDAR_ENTITY,
     CONF_GOOGLE_MAPS_API_KEY,
     CONF_RANGE_ENTITY,
-    CONF_ROUTING_MODE,
     DEFAULT_BUFFER_PERCENT,
     DEFAULT_LOOKAHEAD_DAYS,
-    DEFAULT_ROUTING_MODE,
     DOMAIN,
     GOOGLE_DISTANCE_MATRIX_URL,
     KEY_EV_BATTERY_PERCENT,
@@ -36,15 +34,16 @@ from .const import (
     KEY_REQUIRED_RANGE_KM,
     KEY_TOMORROW_EVENT_COUNT,
     KEY_TOMORROW_EVENTS,
-    KEY_TOMORROW_NEEDS_CHARGING,
-    KEY_TOMORROW_REQUIRED_RANGE_KM,
-    KEY_TOMORROW_ROUTE_DESCRIPTION,
-    KEY_TOMORROW_TOTAL_DISTANCE_KM,
-    KEY_TOMORROW_TOTAL_DURATION_MIN,
+    KEY_TOMORROW_RT_DISTANCE_KM,
+    KEY_TOMORROW_RT_DURATION_MIN,
+    KEY_TOMORROW_RT_NEEDS_CHARGING,
+    KEY_TOMORROW_RT_REQUIRED_KM,
+    KEY_TOMORROW_SEQ_DISTANCE_KM,
+    KEY_TOMORROW_SEQ_DURATION_MIN,
+    KEY_TOMORROW_SEQ_NEEDS_CHARGING,
+    KEY_TOMORROW_SEQ_REQUIRED_KM,
     KEY_TRIP_DISTANCE_KM,
     KEY_TRIP_DURATION_MIN,
-    ROUTING_MODE_ROUND_TRIP,
-    ROUTING_MODE_SEQUENTIAL,
     UPDATE_INTERVAL_MINUTES,
 )
 
@@ -66,7 +65,6 @@ class SmartTripPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             CONF_BUFFER_PERCENT, DEFAULT_BUFFER_PERCENT
         )
         self._api_key: str = entry.data[CONF_GOOGLE_MAPS_API_KEY]
-        self.routing_mode: str = entry.data.get(CONF_ROUTING_MODE, DEFAULT_ROUTING_MODE)
 
         # Cache: (origin, destination) → (driving_distance_km, duration_min)
         self._distance_cache: dict[tuple[str, str], tuple[float, float]] = {}
@@ -126,7 +124,9 @@ class SmartTripPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     ) -> tuple[str, str, datetime] | None:
         """Return (summary, location, start_dt) for the next upcoming event with a location."""
         now = dt_util.now()
-        events = await self._get_calendar_events(now, now + timedelta(days=DEFAULT_LOOKAHEAD_DAYS))
+        events = await self._get_calendar_events(
+            now, now + timedelta(days=DEFAULT_LOOKAHEAD_DAYS)
+        )
 
         for event in sorted(events, key=lambda e: e.start_datetime_local):
             location = getattr(event, "location", None) or ""
@@ -250,7 +250,7 @@ class SmartTripPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if leg is None:
                 _LOGGER.warning(
                     "Could not calculate leg %d of tomorrow's sequential route "
-                    "('%s' → '%s'). Tomorrow totals will be unavailable.",
+                    "('%s' → '%s'). Sequential totals will be unavailable.",
                     i + 1,
                     stops[i],
                     stops[i + 1],
@@ -277,7 +277,7 @@ class SmartTripPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if leg is None:
                 _LOGGER.warning(
                     "Could not calculate outbound leg %d of tomorrow's round-trip route "
-                    "('%s' → '%s'). Tomorrow totals will be unavailable.",
+                    "('%s' → '%s'). Round-trip totals will be unavailable.",
                     i + 1,
                     home,
                     loc,
@@ -288,14 +288,6 @@ class SmartTripPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             total_min += leg[1] * 2
 
         return round(total_km, 1), round(total_min, 0)
-
-    async def _get_total_route_distance(
-        self, home: str, locations: list[str]
-    ) -> tuple[float, float] | None:
-        """Dispatch to the correct routing method based on self.routing_mode."""
-        if self.routing_mode == ROUTING_MODE_ROUND_TRIP:
-            return await self._get_round_trip_route_distance(home, locations)
-        return await self._get_sequential_route_distance(home, locations)
 
     def _read_sensor_float(self, entity_id: str) -> float | None:
         """Read a numeric sensor state as float, returning None on failure."""
@@ -367,33 +359,37 @@ class SmartTripPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # ── Tomorrow's events ──────────────────────────────────────────
         tomorrow_events_raw = await self._get_tomorrow_events_with_locations()
         tomorrow_locations = [loc for _, loc, _ in tomorrow_events_raw]
-
-        tomorrow_total_km: float | None = None
-        tomorrow_total_min: float | None = None
-        tomorrow_required_km: float | None = None
-        tomorrow_needs_charging = False
         tomorrow_home = self._home_origin()
 
-        if tomorrow_events_raw and tomorrow_home is not None:
-            route = await self._get_total_route_distance(tomorrow_home, tomorrow_locations)
-            if route is not None:
-                tomorrow_total_km, tomorrow_total_min = route
-                if ev_range_km is not None:
-                    tomorrow_required_km = round(tomorrow_total_km * buffer_factor, 1)
-                    tomorrow_needs_charging = ev_range_km < tomorrow_required_km
+        # Sequential: Home → E1 → E2 → … → EN → Home
+        seq_total_km: float | None = None
+        seq_total_min: float | None = None
+        seq_required_km: float | None = None
+        seq_needs_charging = False
 
-        # Human-readable description of the route mode in use
-        if self.routing_mode == ROUTING_MODE_ROUND_TRIP:
-            route_desc = "Home → each event → Home (independent round trips)"
-        else:
-            route_desc = "Home → events in order → Home (sequential)"
+        # Round-trip: (Home → E1 → Home) + (Home → E2 → Home) + …
+        rt_total_km: float | None = None
+        rt_total_min: float | None = None
+        rt_required_km: float | None = None
+        rt_needs_charging = False
+
+        if tomorrow_events_raw and tomorrow_home is not None:
+            seq = await self._get_sequential_route_distance(tomorrow_home, tomorrow_locations)
+            if seq is not None:
+                seq_total_km, seq_total_min = seq
+                if ev_range_km is not None:
+                    seq_required_km = round(seq_total_km * buffer_factor, 1)
+                    seq_needs_charging = ev_range_km < seq_required_km
+
+            rt = await self._get_round_trip_route_distance(tomorrow_home, tomorrow_locations)
+            if rt is not None:
+                rt_total_km, rt_total_min = rt
+                if ev_range_km is not None:
+                    rt_required_km = round(rt_total_km * buffer_factor, 1)
+                    rt_needs_charging = ev_range_km < rt_required_km
 
         tomorrow_events_list = [
-            {
-                "summary": s,
-                "location": loc,
-                "start": t.isoformat(),
-            }
+            {"summary": s, "location": loc, "start": t.isoformat()}
             for s, loc, t in tomorrow_events_raw
         ]
 
@@ -409,12 +405,17 @@ class SmartTripPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             KEY_REQUIRED_RANGE_KM: required_range_km,
             KEY_NEEDS_CHARGING: needs_charging,
             KEY_GEOCODE_SUCCESS: lookup_ok,
-            # Tomorrow
+            # Tomorrow shared
             KEY_TOMORROW_EVENT_COUNT: len(tomorrow_events_raw),
             KEY_TOMORROW_EVENTS: tomorrow_events_list,
-            KEY_TOMORROW_TOTAL_DISTANCE_KM: tomorrow_total_km,
-            KEY_TOMORROW_TOTAL_DURATION_MIN: tomorrow_total_min,
-            KEY_TOMORROW_REQUIRED_RANGE_KM: tomorrow_required_km,
-            KEY_TOMORROW_NEEDS_CHARGING: tomorrow_needs_charging,
-            KEY_TOMORROW_ROUTE_DESCRIPTION: route_desc,
+            # Tomorrow sequential
+            KEY_TOMORROW_SEQ_DISTANCE_KM: seq_total_km,
+            KEY_TOMORROW_SEQ_DURATION_MIN: seq_total_min,
+            KEY_TOMORROW_SEQ_REQUIRED_KM: seq_required_km,
+            KEY_TOMORROW_SEQ_NEEDS_CHARGING: seq_needs_charging,
+            # Tomorrow round-trip
+            KEY_TOMORROW_RT_DISTANCE_KM: rt_total_km,
+            KEY_TOMORROW_RT_DURATION_MIN: rt_total_min,
+            KEY_TOMORROW_RT_REQUIRED_KM: rt_required_km,
+            KEY_TOMORROW_RT_NEEDS_CHARGING: rt_needs_charging,
         }
