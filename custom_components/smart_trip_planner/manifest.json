@@ -1,16 +1,16 @@
 {
   "domain": "smart_ev_trip_planner",
-  "name": "Smart Trip Planner",
+  "name": "Smart EV Trip Planner",
   "version": "1.0.0",
   "config_flow": true,
-  "documentation": "https://github.com/yourusername/smart-trip-planner",
-  "issue_tracker": "https://github.com/yourusername/smart-trip-planner/issues",
+  "documentation": "https://github.com/zmastaa/smart-ev-trip-planner",
+  "issue_tracker": "https://github.com/zmastaa/smart-ev-trip-planner/issues",
   "requirements": [
     "geopy>=2.4.0"
   ],
   "dependencies": [],
   "after_dependencies": ["calendar"],
-  "codeowners": ["@yourusername"],
+  "codeowners": ["@zmastaa"],
   "iot_class": "local_polling",
   "integration_type": "service",
   "loggers": ["custom_components.smart_ev_trip_planner"]
