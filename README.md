@@ -6,7 +6,7 @@ A HACS custom integration that monitors your Home Assistant Calendar for upcomin
 
 ### Next trip
 1. The integration reads your chosen HA Calendar for the next upcoming event that has a **location** field set.
-2. It calls the **Google Maps Distance Matrix API** to calculate the real driving distance and estimated journey time from your HA home location to the event.
+2. It calls the **Google Maps Routes API** to calculate the real driving distance and estimated journey time from your HA home location to the event.
 3. It compares that distance (plus your configured buffer) against your EV's current estimated range.
 4. A **binary sensor** turns `on` when your EV cannot make the trip on its current charge.
 
@@ -28,15 +28,15 @@ A dedicated binary sensor and pair of distance/duration sensors are exposed for 
 - Two EV sensors already in HA:
   - Battery level sensor (%)
   - Estimated range sensor (km or mi — both are handled automatically)
-- A **Google Maps API key** with the **Distance Matrix API** enabled
+- A **Google Maps API key** with the **Routes API** enabled
 
 ## Getting a Google Maps API key
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/)
 2. Create or select a project
-3. Go to **APIs & Services → Library** and enable the **Distance Matrix API**
+3. Go to **APIs & Services → Library** and enable the **Routes API**
 4. Go to **APIs & Services → Credentials** and create an API key
-5. Optionally restrict the key to the Distance Matrix API for security
+5. Optionally restrict the key to the Routes API for security
 
 ## Installation via HACS
 
@@ -56,9 +56,9 @@ During setup you will be asked to select:
 | EV Battery Level Sensor | Sensor reporting battery % |
 | EV Estimated Range Sensor | Sensor reporting range remaining (km or mi) |
 | Charge Buffer (%) | Extra margin added on top of the driving distance (default 15%) |
-| Google Maps API Key | Your Distance Matrix API key (stored securely, masked in the UI) |
+| Google Maps API Key | Your Routes API key (stored securely, masked in the UI) |
 
-Your API key is validated against the Distance Matrix API during setup — you'll see an error immediately if the key is invalid or the API isn't enabled.
+Your API key is validated against the Routes API during setup — you'll see an error immediately if the key is invalid or the API isn't enabled.
 
 ## Entities created
 
@@ -92,7 +92,7 @@ All distance sensors use `SensorDeviceClass.DISTANCE` so Home Assistant automati
 
 ### What is an element?
 
-The Distance Matrix API bills by **elements**, not by requests. Each request contains one or more origin→destination pairs, and `elements = number of origins × number of destinations`. This integration always sends **1 origin and 1 destination per request**, so every request consumes exactly **1 element**.
+The Routes API bills by **elements**, not by requests. Each call to `computeRouteMatrix` contains one or more origin→destination pairs, and `elements = number of origins × number of destinations`. This integration always sends **1 origin and 1 destination per request**, so every request consumes exactly **1 element**.
 
 The free tier covers **10,000 elements per month**.
 
@@ -184,7 +184,7 @@ action:
 
 ## Notes
 
-- Driving distances and durations reflect real road distances via the Google Maps Distance Matrix API, not straight-line estimates.
+- Driving distances and durations reflect real road distances via the Google Maps Routes API, not straight-line estimates.
 - Results are cached in memory per session. If an event location string changes, the new location is fetched on the next refresh cycle.
 - The integration refreshes every 30 minutes.
 - Make sure your **Home location is set** in Settings → System → General — this is used as the origin for all distance calculations.

@@ -23,7 +23,8 @@ from .const import (
     DEFAULT_BUFFER_PERCENT,
     DEFAULT_LOOKAHEAD_DAYS,
     DOMAIN,
-    GOOGLE_DISTANCE_MATRIX_URL,
+    GOOGLE_ROUTES_FIELD_MASK,
+    GOOGLE_ROUTES_MATRIX_URL,
     KEY_EV_BATTERY_PERCENT,
     KEY_EV_RANGE_KM,
     KEY_GEOCODE_SUCCESS,
@@ -50,6 +51,22 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 MILES_TO_KM = 1.60934
+
+
+def _parse_waypoint(location: str) -> dict:
+    """
+    Return a Routes API waypoint dict.
+    If the string looks like 'lat,lon' it becomes a latLng; otherwise treated as an address.
+    """
+    parts = location.split(",", 1)
+    if len(parts) == 2:
+        try:
+            lat = float(parts[0].strip())
+            lon = float(parts[1].strip())
+            return {"location": {"latLng": {"latitude": lat, "longitude": lon}}}
+        except ValueError:
+            pass
+    return {"address": location}
 
 
 class SmartTripPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -159,57 +176,60 @@ class SmartTripPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     ) -> tuple[float, float] | None:
         """
         Return (driving_distance_km, duration_min) between any two points via
-        Google Maps Distance Matrix API, with in-memory caching per (origin, destination) pair.
+        the Google Maps Routes API (computeRouteMatrix), with in-memory caching.
         """
         cache_key = (origin, destination)
         if cache_key in self._distance_cache:
             return self._distance_cache[cache_key]
 
-        params = {
-            "origins": origin,
-            "destinations": destination,
-            "mode": "driving",
-            "units": "metric",
-            "key": self._api_key,
+        body = {
+            "origins": [{"waypoint": _parse_waypoint(origin)}],
+            "destinations": [{"waypoint": _parse_waypoint(destination)}],
+            "travelMode": "DRIVE",
+            "routingPreference": "TRAFFIC_UNAWARE",
+        }
+        headers = {
+            "X-Goog-Api-Key": self._api_key,
+            "X-Goog-FieldMask": GOOGLE_ROUTES_FIELD_MASK,
+            "Content-Type": "application/json",
         }
 
         try:
             timeout = aiohttp.ClientTimeout(total=10)
             async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(
-                    GOOGLE_DISTANCE_MATRIX_URL, params=params
+                async with session.post(
+                    GOOGLE_ROUTES_MATRIX_URL, json=body, headers=headers
                 ) as resp:
                     resp.raise_for_status()
-                    data = await resp.json()
+                    results = await resp.json()
 
-            top_status = data.get("status")
-            if top_status != "OK":
+            if not results:
                 _LOGGER.warning(
-                    "Distance Matrix API returned top-level status '%s' for '%s' → '%s'",
-                    top_status,
+                    "Routes API returned empty response for '%s' → '%s'",
                     origin,
                     destination,
                 )
                 return None
 
-            element = data["rows"][0]["elements"][0]
-            el_status = element.get("status")
-            if el_status != "OK":
+            element = results[0]
+            condition = element.get("condition", "")
+            if condition != "ROUTE_EXISTS":
                 _LOGGER.warning(
-                    "Distance Matrix element status '%s' for '%s' → '%s'",
-                    el_status,
+                    "Routes API condition '%s' for '%s' → '%s'",
+                    condition,
                     origin,
                     destination,
                 )
                 return None
 
-            distance_km = round(element["distance"]["value"] / 1000, 1)
-            duration_min = round(element["duration"]["value"] / 60, 0)
+            distance_km = round(element["distanceMeters"] / 1000, 1)
+            # duration is returned as a string like "672s"
+            duration_min = round(int(element["duration"].rstrip("s")) / 60, 0)
 
             result = (distance_km, duration_min)
             self._distance_cache[cache_key] = result
             _LOGGER.debug(
-                "Driving '%s' → '%s': %.1f km, %.0f min",
+                "Routes API '%s' → '%s': %.1f km, %.0f min",
                 origin,
                 destination,
                 distance_km,
@@ -217,16 +237,33 @@ class SmartTripPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             return result
 
+        except aiohttp.ClientResponseError as exc:
+            if exc.status in (401, 403):
+                _LOGGER.error(
+                    "Routes API authentication failed for '%s' → '%s' (HTTP %d). "
+                    "Check your API key and that the Routes API is enabled.",
+                    origin,
+                    destination,
+                    exc.status,
+                )
+            else:
+                _LOGGER.error(
+                    "Routes API HTTP %d for '%s' → '%s': %s",
+                    exc.status,
+                    origin,
+                    destination,
+                    exc,
+                )
         except aiohttp.ClientError as exc:
             _LOGGER.error(
-                "Network error fetching driving distance '%s' → '%s': %s",
+                "Network error calling Routes API '%s' → '%s': %s",
                 origin,
                 destination,
                 exc,
             )
         except Exception as exc:
             _LOGGER.error(
-                "Unexpected error fetching driving distance '%s' → '%s': %s",
+                "Unexpected error calling Routes API '%s' → '%s': %s",
                 origin,
                 destination,
                 exc,

@@ -21,7 +21,7 @@ from .const import (
     DEFAULT_BUFFER_PERCENT,
     DEFAULT_NAME,
     DOMAIN,
-    GOOGLE_DISTANCE_MATRIX_URL,
+    GOOGLE_ROUTES_MATRIX_URL,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -74,31 +74,33 @@ def _build_schema(defaults: dict | None = None) -> vol.Schema:
 
 async def _test_google_maps_key(api_key: str) -> str | None:
     """
-    Make a minimal Distance Matrix request to verify the API key is valid
-    and the Distance Matrix API is enabled on the project.
+    Make a minimal Routes API request to verify the API key is valid
+    and the Routes API is enabled on the project.
     Returns None on success, or an error key string on failure.
     """
-    params = {
-        "origins": "51.5074,-0.1278",   # London
-        "destinations": "48.8566,2.3522",  # Paris
-        "mode": "driving",
-        "key": api_key,
+    body = {
+        "origins": [{"waypoint": {"location": {"latLng": {"latitude": 51.5074, "longitude": -0.1278}}}}],
+        "destinations": [{"waypoint": {"location": {"latLng": {"latitude": 48.8566, "longitude": 2.3522}}}}],
+        "travelMode": "DRIVE",
+    }
+    headers = {
+        "X-Goog-Api-Key": api_key,
+        "X-Goog-FieldMask": "originIndex,destinationIndex,condition",
+        "Content-Type": "application/json",
     }
     try:
         timeout = aiohttp.ClientTimeout(total=10)
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(GOOGLE_DISTANCE_MATRIX_URL, params=params) as resp:
+            async with session.post(GOOGLE_ROUTES_MATRIX_URL, json=body, headers=headers) as resp:
+                if resp.status in (401, 403):
+                    return "invalid_api_key"
                 resp.raise_for_status()
-                data = await resp.json()
+    except aiohttp.ClientResponseError:
+        return "invalid_api_key"
     except aiohttp.ClientError:
         return "cannot_connect"
 
-    status = data.get("status", "")
-    if status == "OK":
-        return None
-    if status in ("REQUEST_DENIED", "INVALID_REQUEST"):
-        return "invalid_api_key"
-    return "cannot_connect"
+    return None
 
 
 async def _validate_input(hass: HomeAssistant, data: dict[str, Any]) -> None:

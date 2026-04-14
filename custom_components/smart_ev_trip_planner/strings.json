@@ -16,7 +16,7 @@
           "battery_entity": "Sensor reporting your EV's current battery percentage.",
           "range_entity": "Sensor reporting your EV's current estimated range (km or mi).",
           "buffer_percent": "Extra range margin added on top of the trip distance.",
-          "google_maps_api_key": "API key from Google Cloud Console. Requires the Distance Matrix API to be enabled."
+          "google_maps_api_key": "API key from Google Cloud Console. Requires the Routes API to be enabled."
         }
       }
     },

@@ -10,8 +10,9 @@ CONF_RANGE_ENTITY = "range_entity"
 CONF_BUFFER_PERCENT = "buffer_percent"
 CONF_GOOGLE_MAPS_API_KEY = "google_maps_api_key"
 
-# Google Maps
-GOOGLE_DISTANCE_MATRIX_URL = "https://maps.googleapis.com/maps/api/distancematrix/json"
+# Google Maps Routes API (replaces legacy Distance Matrix API)
+GOOGLE_ROUTES_MATRIX_URL = "https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix"
+GOOGLE_ROUTES_FIELD_MASK = "originIndex,destinationIndex,distanceMeters,duration,condition"
 
 # Defaults
 DEFAULT_BUFFER_PERCENT = 15
