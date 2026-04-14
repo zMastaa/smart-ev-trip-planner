@@ -17,6 +17,7 @@ from .const import (
     CONF_CALENDAR_ENTITY,
     CONF_RANGE_ENTITY,
     DEFAULT_BUFFER_PERCENT,
+    DEFAULT_NAME,
     DOMAIN,
 )
 
