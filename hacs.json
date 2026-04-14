@@ -1,8 +1,5 @@
 {
   "name": "Smart EV Trip Planner",
-  "zip_release": true,
-  "hide_default_branch": false,
-  "homeassistant": "2024.1.0",
-  "hacs": "1.32.0",
-  "filename": "smart_ev_trip_planner.zip"
+  "render_readme": true,
+  "homeassistant": "2024.1.0"
 }
