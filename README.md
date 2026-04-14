@@ -23,7 +23,7 @@ A HACS custom integration that monitors your Home Assistant Calendar for upcomin
 
 1. Open HACS → Integrations → Custom repositories
 2. Add `https://github.com/zmastaa/smart-ev-trip-planner` as type **Integration**
-3. Install **Smart Trip Planner**
+3. Install **Smart EV Trip Planner**
 4. Restart Home Assistant
 5. Go to **Settings → Devices & Services → Add Integration** and search for **Smart Trip Planner**
 
