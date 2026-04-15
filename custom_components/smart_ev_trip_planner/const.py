@@ -31,6 +31,22 @@ KEY_REQUIRED_RANGE_KM = "required_range_km"
 KEY_NEEDS_CHARGING = "needs_charging"
 KEY_GEOCODE_SUCCESS = "geocode_success"
 
+# ── Today — remaining events ───────────────────────────────────────────
+KEY_TODAY_EVENT_COUNT = "today_event_count"
+KEY_TODAY_EVENTS = "today_events"
+
+# ── Today — sequential route (Home → E1 → E2 → … → EN → Home) ─────────
+KEY_TODAY_SEQ_DISTANCE_KM = "today_seq_distance_km"
+KEY_TODAY_SEQ_DURATION_MIN = "today_seq_duration_min"
+KEY_TODAY_SEQ_REQUIRED_KM = "today_seq_required_range_km"
+KEY_TODAY_SEQ_NEEDS_CHARGING = "today_seq_needs_charging"
+
+# ── Today — round-trip route (Home → Ei → Home per event) ─────────────
+KEY_TODAY_RT_DISTANCE_KM = "today_rt_distance_km"
+KEY_TODAY_RT_DURATION_MIN = "today_rt_duration_min"
+KEY_TODAY_RT_REQUIRED_KM = "today_rt_required_range_km"
+KEY_TODAY_RT_NEEDS_CHARGING = "today_rt_needs_charging"
+
 # ── Tomorrow — shared ──────────────────────────────────────────────────
 KEY_TOMORROW_EVENT_COUNT = "tomorrow_event_count"
 KEY_TOMORROW_EVENTS = "tomorrow_events"

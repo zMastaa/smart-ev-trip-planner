@@ -33,6 +33,16 @@ from .const import (
     KEY_NEXT_EVENT_START,
     KEY_NEXT_EVENT_SUMMARY,
     KEY_REQUIRED_RANGE_KM,
+    KEY_TODAY_EVENT_COUNT,
+    KEY_TODAY_EVENTS,
+    KEY_TODAY_RT_DISTANCE_KM,
+    KEY_TODAY_RT_DURATION_MIN,
+    KEY_TODAY_RT_NEEDS_CHARGING,
+    KEY_TODAY_RT_REQUIRED_KM,
+    KEY_TODAY_SEQ_DISTANCE_KM,
+    KEY_TODAY_SEQ_DURATION_MIN,
+    KEY_TODAY_SEQ_NEEDS_CHARGING,
+    KEY_TODAY_SEQ_REQUIRED_KM,
     KEY_TOMORROW_EVENT_COUNT,
     KEY_TOMORROW_EVENTS,
     KEY_TOMORROW_RT_DISTANCE_KM,
@@ -151,6 +161,24 @@ class SmartTripPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 return event.summary, location.strip(), event.start_datetime_local
 
         return None
+
+    async def _get_today_remaining_events_with_locations(
+        self,
+    ) -> list[tuple[str, str, datetime]]:
+        """Return today's not-yet-started events that have a location, sorted by start time."""
+        now = dt_util.now()
+        today_end = dt_util.start_of_local_day(now) + timedelta(days=1)
+
+        events = await self._get_calendar_events(now, today_end)
+
+        result = []
+        for event in sorted(events, key=lambda e: e.start_datetime_local):
+            location = getattr(event, "location", None) or ""
+            if location.strip():
+                result.append(
+                    (event.summary, location.strip(), event.start_datetime_local)
+                )
+        return result
 
     async def _get_tomorrow_events_with_locations(
         self,
@@ -393,6 +421,41 @@ class SmartTripPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 required_range_km = round(trip_distance_km * buffer_factor, 1)
                 needs_charging = ev_range_km < required_range_km
 
+        # ── Today's remaining events ───────────────────────────────────
+        today_events_raw = await self._get_today_remaining_events_with_locations()
+        today_locations = [loc for _, loc, _ in today_events_raw]
+        today_home = self._home_origin()
+
+        today_seq_total_km: float | None = None
+        today_seq_total_min: float | None = None
+        today_seq_required_km: float | None = None
+        today_seq_needs_charging = False
+
+        today_rt_total_km: float | None = None
+        today_rt_total_min: float | None = None
+        today_rt_required_km: float | None = None
+        today_rt_needs_charging = False
+
+        if today_events_raw and today_home is not None:
+            today_seq = await self._get_sequential_route_distance(today_home, today_locations)
+            if today_seq is not None:
+                today_seq_total_km, today_seq_total_min = today_seq
+                if ev_range_km is not None:
+                    today_seq_required_km = round(today_seq_total_km * buffer_factor, 1)
+                    today_seq_needs_charging = ev_range_km < today_seq_required_km
+
+            today_rt = await self._get_round_trip_route_distance(today_home, today_locations)
+            if today_rt is not None:
+                today_rt_total_km, today_rt_total_min = today_rt
+                if ev_range_km is not None:
+                    today_rt_required_km = round(today_rt_total_km * buffer_factor, 1)
+                    today_rt_needs_charging = ev_range_km < today_rt_required_km
+
+        today_events_list = [
+            {"summary": s, "location": loc, "start": t.isoformat()}
+            for s, loc, t in today_events_raw
+        ]
+
         # ── Tomorrow's events ──────────────────────────────────────────
         tomorrow_events_raw = await self._get_tomorrow_events_with_locations()
         tomorrow_locations = [loc for _, loc, _ in tomorrow_events_raw]
@@ -431,6 +494,17 @@ class SmartTripPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         ]
 
         return {
+            # Today remaining
+            KEY_TODAY_EVENT_COUNT: len(today_events_raw),
+            KEY_TODAY_EVENTS: today_events_list,
+            KEY_TODAY_SEQ_DISTANCE_KM: today_seq_total_km,
+            KEY_TODAY_SEQ_DURATION_MIN: today_seq_total_min,
+            KEY_TODAY_SEQ_REQUIRED_KM: today_seq_required_km,
+            KEY_TODAY_SEQ_NEEDS_CHARGING: today_seq_needs_charging,
+            KEY_TODAY_RT_DISTANCE_KM: today_rt_total_km,
+            KEY_TODAY_RT_DURATION_MIN: today_rt_total_min,
+            KEY_TODAY_RT_REQUIRED_KM: today_rt_required_km,
+            KEY_TODAY_RT_NEEDS_CHARGING: today_rt_needs_charging,
             # Next event
             KEY_NEXT_EVENT_SUMMARY: summary,
             KEY_NEXT_EVENT_LOCATION: location,

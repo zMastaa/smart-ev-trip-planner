@@ -88,7 +88,7 @@ Your API key is validated against the Routes API during setup — you'll see an 
 
 All distance sensors use `SensorDeviceClass.DISTANCE` so Home Assistant automatically displays them in miles if your profile is set to imperial units.
 
-## Google Maps API usage
+## Google Maps API Usage & Cost Management
 
 ### What is an element?
 
@@ -136,7 +136,20 @@ First refresh total:  11 elements
 Subsequent refreshes: 0 elements (full cache hit)
 ```
 
-At a maximum of ~11 elements per day on the most demanding schedule, and with the cache eliminating all repeat lookups, a typical month's usage sits well under 400 elements — well within the 10,000 element free tier.
+Even with a heavy schedule of 5+ events per day, the application consumes approximately 11 elements per day. This results in roughly 330 elements per month, which is less than 2% of the estimated free monthly credit provided by Google.
+
+### Capping API usage for peace of mind
+
+Even though normal usage stays well inside the free tier, you can set a hard quota cap on the Routes API so it stops accepting requests once a limit you choose is reached. This guarantees you can never be charged beyond what you are comfortable with.
+
+1. In the [Google Cloud Console](https://console.cloud.google.com/), go to **APIs & Services → Dashboard** and select your project.
+2. Click on the **Routes API** in your enabled APIs list.
+3. Open the **Quotas** tab.
+4. Use the filter to find the quota you want to cap (e.g. *Requests per day*).
+5. Check the checkbox next to it and click **Edit quotas**.
+6. Enter your desired limit and submit the request.
+
+> **Note:** Quota enforcement has a small lag, so Google recommends setting your cap slightly below your true limit if you are using it to control billing. See the [Google documentation on capping API usage](https://docs.cloud.google.com/apis/docs/capping-api-usage) for full details.
 
 ## Example automations
 

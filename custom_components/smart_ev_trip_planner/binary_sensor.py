@@ -15,6 +15,12 @@ from .const import (
     KEY_EV_RANGE_KM,
     KEY_NEEDS_CHARGING,
     KEY_REQUIRED_RANGE_KM,
+    KEY_TODAY_RT_DISTANCE_KM,
+    KEY_TODAY_RT_NEEDS_CHARGING,
+    KEY_TODAY_RT_REQUIRED_KM,
+    KEY_TODAY_SEQ_DISTANCE_KM,
+    KEY_TODAY_SEQ_NEEDS_CHARGING,
+    KEY_TODAY_SEQ_REQUIRED_KM,
     KEY_TOMORROW_RT_NEEDS_CHARGING,
     KEY_TOMORROW_RT_REQUIRED_KM,
     KEY_TOMORROW_RT_DISTANCE_KM,
@@ -34,6 +40,8 @@ async def async_setup_entry(
     coordinator: SmartTripPlannerCoordinator = entry.runtime_data
     async_add_entities([
         NeedsChargingBinarySensor(coordinator),
+        TodaySequentialNeedsChargingBinarySensor(coordinator),
+        TodayRoundTripNeedsChargingBinarySensor(coordinator),
         TomorrowSequentialNeedsChargingBinarySensor(coordinator),
         TomorrowRoundTripNeedsChargingBinarySensor(coordinator),
     ])
@@ -76,6 +84,92 @@ class NeedsChargingBinarySensor(
             "ev_range_km": ev_range,
             "required_range_km": required,
             "shortfall_km": shortfall,
+        }
+
+
+class TodaySequentialNeedsChargingBinarySensor(
+    CoordinatorEntity[SmartTripPlannerCoordinator], BinarySensorEntity
+):
+    """Binary sensor: ON when the EV can't cover today's remaining sequential route (Home → E1 → E2 → … → Home)."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Today Sequential Needs Charging"
+    _attr_icon = "mdi:calendar-alert"
+    _attr_device_class = BinarySensorDeviceClass.BATTERY
+
+    def __init__(self, coordinator: SmartTripPlannerCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_today_seq_needs_charging"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, coordinator.entry.entry_id)},
+            "name": "Smart EV Trip Planner",
+            "model": "EV Trip Advisor",
+        }
+
+    @property
+    def is_on(self) -> bool:
+        if self.coordinator.data is None:
+            return False
+        return bool(self.coordinator.data.get(KEY_TODAY_SEQ_NEEDS_CHARGING, False))
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        data = self.coordinator.data or {}
+        ev_range = data.get(KEY_EV_RANGE_KM)
+        total = data.get(KEY_TODAY_SEQ_DISTANCE_KM)
+        required = data.get(KEY_TODAY_SEQ_REQUIRED_KM)
+        shortfall = None
+        if ev_range is not None and required is not None:
+            shortfall = round(required - ev_range, 1)
+        return {
+            "ev_range_km": ev_range,
+            "total_distance_km": total,
+            "required_range_km": required,
+            "shortfall_km": shortfall,
+            "route": "Home → E1 → E2 → … → EN → Home",
+        }
+
+
+class TodayRoundTripNeedsChargingBinarySensor(
+    CoordinatorEntity[SmartTripPlannerCoordinator], BinarySensorEntity
+):
+    """Binary sensor: ON when the EV can't cover today's remaining per-event round trips (Home → Ei → Home each)."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Today Round Trip Needs Charging"
+    _attr_icon = "mdi:calendar-alert"
+    _attr_device_class = BinarySensorDeviceClass.BATTERY
+
+    def __init__(self, coordinator: SmartTripPlannerCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_today_rt_needs_charging"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, coordinator.entry.entry_id)},
+            "name": "Smart EV Trip Planner",
+            "model": "EV Trip Advisor",
+        }
+
+    @property
+    def is_on(self) -> bool:
+        if self.coordinator.data is None:
+            return False
+        return bool(self.coordinator.data.get(KEY_TODAY_RT_NEEDS_CHARGING, False))
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        data = self.coordinator.data or {}
+        ev_range = data.get(KEY_EV_RANGE_KM)
+        total = data.get(KEY_TODAY_RT_DISTANCE_KM)
+        required = data.get(KEY_TODAY_RT_REQUIRED_KM)
+        shortfall = None
+        if ev_range is not None and required is not None:
+            shortfall = round(required - ev_range, 1)
+        return {
+            "ev_range_km": ev_range,
+            "total_distance_km": total,
+            "required_range_km": required,
+            "shortfall_km": shortfall,
+            "route": "Home → E1 → Home, Home → E2 → Home, …",
         }
 
 
