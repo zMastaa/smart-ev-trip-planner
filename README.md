@@ -90,53 +90,45 @@ All distance sensors use `SensorDeviceClass.DISTANCE` so Home Assistant automati
 
 ## Google Maps API Usage & Cost Management
 
-### What is an element?
+### Billing Model: Routes API (`computeRouteMatrix`)
+This application utilizes the Google Routes API, specifically the `computeRouteMatrix` method. 
 
-The Routes API bills by **elements**, not by requests. Each call to `computeRouteMatrix` contains one or more origin→destination pairs, and `elements = number of origins × number of destinations`. This integration always sends **1 origin and 1 destination per request**, so every request consumes exactly **1 element**.
+**Cost Calculation:**
+Google bills this API based on **elements** (where $Elements = Origins \times Destinations$). To ensure maximum cost-efficiency and predictability, this integration is architected to always send exactly **one origin and one destination per request**. Consequently, each API call consumes exactly **1 element**.
 
-The free tier covers **10,000 elements per month**.
+Google provides a recurring **\$200 monthly credit** to all billing accounts. At the standard rate (~$5–$10 per 1,000 elements), this allows for tens of thousands of free elements per month. This application is designed to stay well below this threshold.
 
-### Caching
+### Caching Strategy
+To minimize API latency and prevent redundant billing, the application implements a multi-layer caching strategy:
+1. **In-Memory Cache:** Every unique origin $\to$ destination pair is cached in memory for the duration of the session. If a leg has been calculated once, it is never re-fetched until the cache expires.
+2. **30-Minute Refresh Cycle:** The application performs a periodic check. Only "new" or "unvisited" legs (legs not present in the current cache) trigger a new `computeRouteMatrix` call.
 
-Every unique origin→destination pair is fetched once per HA session and then cached in memory, so the same leg is never looked up twice while HA is running. API calls are only made on a 30-minute refresh cycle when a new, uncached leg is encountered.
+### Usage Estimation (Worst-Case Scenario)
+The table below estimates the "Cold Start" cost (the first refresh of the day when the cache is empty). We assume the application must calculate both the **sequential path** ($Home \to E_1 \to E_2$) and the **round-trip capability** ($Home \to E_n$).
 
-### How many elements per day?
+| Events Tomorrow | Sequential Legs (Elements) | Round-Trip New Legs* | Total Elements (First Refresh) |
+| :--- | :---: | :---: | :---: |
+| 1 Event | 2 | 0 | **2** |
+| 2 Events | 3 | 1 | **4** |
+| 3 Events | 4 | 2 | **6** |
+| 4 Events | 5 | 3 | **8** |
+| 5 Events | 6 | 4 | **10** |
 
-The table below shows the worst-case element count on the **first refresh of the day** (cold cache), broken down by the number of tomorrow's events with a location. The next-trip lookup adds 1 element on top if its destination is not already in the cache.
+*\*The round-trip pass reuses the $Home \to E_1$ element from the sequential pass. Each subsequent $Home \to E_n$ is a new element.*
 
-| Events tomorrow | Sequential legs | Round-trip new legs* | Total elements (first refresh) |
-|:-:|---|---|:-:|
-| 1 | Home→E1, E1→Home = **2** | Home→E1 already cached = **0** | **2** |
-| 2 | Home→E1, E1→E2, E2→Home = **3** | Home→E2 not cached = **1** | **4** |
-| 3 | Home→E1, E1→E2, E2→E3, E3→Home = **4** | Home→E2, Home→E3 not cached = **2** | **6** |
-| 4 | Home→E1 … E4→Home = **5** | Home→E2, Home→E3, Home→E4 not cached = **3** | **8** |
-| 5 | Home→E1 … E5→Home = **6** | Home→E2 … Home→E5 not cached = **4** | **10** |
+#### Example Breakdown (3 Events: Gym, Dentist, Dinner)
+**Initial Refresh (Cold Cache):**
+* **Sequential Pass (4 elements):** `Home→Gym`, `Gym→Dentist`, `Dintist→Dinner`, `Dinner→Home`
+* **Round-trip Pass (2 elements):** `Home→Dentist`, `Home→Dinner` (Note: `Home→Gym` is skipped as it is already cached).
+* **Next-trip Lookup (1 element):** `Home→[Next Event]` 
+* **Total:** **7 Elements**
 
-\* The round-trip pass always reuses `Home→E1` from the sequential pass. Each subsequent `Home→Ei` is a new leg.
+**Subsequent Refreshes (Warm Cache):**
+* All legs are already present in memory.
+* **Total: 0 Elements**
 
-**Example — 3 events tomorrow** (gym, dentist, dinner):
-
-```
-Sequential pass  (4 elements):  Home→Gym, Gym→Dentist, Dentist→Dinner, Dinner→Home
-Round-trip pass  (2 elements):  Home→Dentist, Home→Dinner  ← Home→Gym already cached
-Next trip        (1 element):   Home→next event             ← likely already cached too
-─────────────────────────────────────────────────────────
-First refresh total:  7 elements
-Subsequent refreshes: 0 elements (full cache hit)
-```
-
-**Example — 5 events tomorrow** (school run, coffee, physio, supermarket, football):
-
-```
-Sequential pass  (6 elements):  Home→E1, E1→E2, E2→E3, E3→E4, E4→E5, E5→Home
-Round-trip pass  (4 elements):  Home→E2, Home→E3, Home→E4, Home→E5  ← Home→E1 cached
-Next trip        (1 element):   Home→next event
-─────────────────────────────────────────────────────────
-First refresh total:  11 elements
-Subsequent refreshes: 0 elements (full cache hit)
-```
-
-Even with a heavy schedule of 5+ events per day, the application consumes approximately 11 elements per day. This results in roughly 330 elements per month, which is less than 2% of the estimated free monthly credit provided by Google.
+### Conclusion
+Even with a heavy schedule of 5+ events per day, the application consumes approximately **11 elements per day**. This results in roughly **330 elements per month**, which is less than **2%** of the estimated free monthly credit provided by Google.
 
 ### Capping API usage for peace of mind
 
